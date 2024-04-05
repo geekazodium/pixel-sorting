@@ -3,7 +3,7 @@
 import { main } from "../main.js";
 import { ShaderProgram } from "./Shaderprogram.js";
 
-const fullscreenQuadVertex = `#version 300 es
+const fullscreenQuadVertexWithUv = `#version 300 es
 precision mediump float;
 
 out vec2 uv;
@@ -15,15 +15,23 @@ void main(){
 }
 `;
 
+const fullscreenQuadVertex = `#version 300 es
+precision mediump float;
+
+void main(){
+    vec4 pos = vec4(float((gl_VertexID<<1) & 2) - 1., float(gl_VertexID&2) - 1.,-0.5,1);
+    gl_Position = pos;
+}
+`;
+
 const maskGenFragShader = `#version 300 es
 precision mediump float;
 
-in vec2 uv;
 out lowp uint outputColor;
 uniform mediump sampler2D uSampler;
 
 void main(){
-    vec3 sampleColor = texture(uSampler,uv).xyz;
+    vec3 sampleColor = texelFetch(uSampler,ivec2(gl_FragCoord),0).xyz;
     float luminance = sampleColor.x * 0.25 + sampleColor.y * 0.4 + sampleColor.z * 0.35;
     lowp uint mask = (luminance>.1)?1u:0u;
     outputColor = mask;
@@ -40,7 +48,6 @@ void main(){
 const maskScanFragShader = `#version 300 es
 precision mediump float;
 
-in vec2 uv;
 out mediump uint outputColor;
 uniform lowp usampler2D uSampler;
 
@@ -74,12 +81,11 @@ void main(){
 const genKeysFragShader = `#version 300 es
 precision mediump float;
 
-in vec2 uv;
 out mediump uvec2 outputColor;
 uniform mediump sampler2D uSampler;
 
 void main(){
-    vec3 sampleColor = texture(uSampler,uv).xyz;
+    vec3 sampleColor = texelFetch(uSampler,ivec2(gl_FragCoord),0).xyz;
     float luminance = sampleColor.x * 0.25 + sampleColor.y * 0.4 + sampleColor.z * 0.35;
     mediump uint fragY = uint(gl_FragCoord.y);
     outputColor = uvec2(uint(luminance*8192.),fragY);
@@ -132,7 +138,6 @@ void main(){
 const debugSort = `#version 300 es
 precision mediump float;
 
-in vec2 uv;
 out mediump vec4 outputColor;
 uniform mediump usampler2D uSampler;
 uniform lowp usampler2D mask;
@@ -154,9 +159,10 @@ precision mediump float;
 in vec2 uv;
 out vec4 outputColor;
 uniform mediump sampler2D uSampler;
+uniform float offset;
 
 void main(){
-    outputColor = texture(uSampler,uv);
+    outputColor = texture(uSampler,uv*vec2(1,-1) + offset);
 }
 `
 
@@ -170,7 +176,7 @@ export class PostProcessSortingRenderer{
     constructor(gl,srcTexture,dstFrameBuffer){
         this.srcTexture = srcTexture;
         this.dstFrameBuffer = dstFrameBuffer;
-        this.preResamplePass = new ShaderProgram(gl,fullscreenQuadVertex,rescaleFragShader);
+        this.preResamplePass = new ShaderProgram(gl,fullscreenQuadVertexWithUv,rescaleFragShader);
 
         this.maskGenPass = new ShaderProgram(gl,fullscreenQuadVertex,maskGenFragShader);
         this.maskScanPass = new ShaderProgram(gl,fullscreenQuadVertex,maskScanFragShader);
@@ -200,6 +206,8 @@ export class PostProcessSortingRenderer{
         this.preResampleFrameBuffer = gl.createFramebuffer();
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.preResampleFrameBuffer);
         gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.preResampleTexture,0);
+
+        this.offset = 0;
     }
     
     /**
@@ -210,6 +218,7 @@ export class PostProcessSortingRenderer{
         if(main.viewportScaleUpdated){
             this.onUpdateViewportScale(gl);
         }
+        this.offset += 0.01;
         this.prepass(gl);
         this.sortingMaskPass(gl);
         this.scanMaskPass(gl);
@@ -219,7 +228,6 @@ export class PostProcessSortingRenderer{
         let swapped = false;
 
         for(let pass = 0;pass<totalPasses;pass++){
-            this.dstFrameBuffer
             for(let step = pass;step>=0;step--){
                 //console.log(step)
                 gl.bindFramebuffer(gl.FRAMEBUFFER,this.sortFrameBuffer);
@@ -235,6 +243,7 @@ export class PostProcessSortingRenderer{
                 //await new Promise(res=>{setTimeout(t=>res(),16)});
             }
         }
+        this.transferResult(gl);
         //await new Promise(res=>{setTimeout(t=>res(),1000)});
         this.logged = true;
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.dstFrameBuffer);
@@ -296,6 +305,7 @@ export class PostProcessSortingRenderer{
         gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.preResampleTexture,0);
 
         gl.uniform1i(this.preResamplePass.getUniformLocation("uSampler"),0);
+        gl.uniform1f(this.preResamplePass.getUniformLocation("offset"),this.offset);
 
         gl.disable(gl.DEPTH_TEST);
         gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
@@ -368,7 +378,8 @@ export class PostProcessSortingRenderer{
         gl.uniform1i(this.sortIndexPass.getUniformLocation("step"),step * (reversed?-1:1));
 
         gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
-
+    }
+    transferResult(gl){
         this.debugSortingDisplay.use();
         
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.dstFrameBuffer);
