@@ -89,7 +89,8 @@ void main(){
 const sortIndiciesFragShader = `#version 300 es
 precision mediump float;
 
-out mediump vec4 outputColor;
+out mediump uvec2 outputColor;
+uniform lowp int step;
 uniform mediump usampler2D uSampler;
 uniform lowp usampler2D mask;
 
@@ -105,14 +106,42 @@ uvec2 getPixelVal(uvec2 texel1, uvec2 texel2, uint col, bool min){
 }
 
 void main(){
+    bool rev = step < 0;
+    lowp uint p = uint(abs(step));
+
     ivec2 fragCoord = ivec2(gl_FragCoord);
 
-    uvec2 sortTexel1 = texelFetch(uSampler,fragCoord / ivec2(1,2) * ivec2(1,2),0).xy;
-    uvec2 sortTexel2 = texelFetch(uSampler,fragCoord / ivec2(1,2) * ivec2(1,2) + ivec2(0,1),0).xy;
+    int o = int(p) & 1;
 
-    uvec2 tmp = getPixelVal(sortTexel1,sortTexel2,uint(fragCoord.x),fragCoord.y%2 == 0);
+    int s1 = ((fragCoord.y + o) / 2) * 2 - o;
+    int s2 = ((fragCoord.y + o) / 2) * 2 + 1 - o;
 
-    outputColor = vec4(vec2(tmp)/8192.,0,1);
+    uvec2 sortTexel1 = texelFetch(uSampler,ivec2(fragCoord.x,s1),0).xy;
+    uvec2 sortTexel2 = texelFetch(uSampler,ivec2(fragCoord.x,s2),0).xy;
+
+    uvec2 tmp = getPixelVal(sortTexel1,sortTexel2,uint(fragCoord.x),fragCoord.y%2 == 0 ^^ o==1);
+
+    outputColor = tmp;
+}
+`
+
+const debugSort = `#version 300 es
+precision mediump float;
+
+in vec2 uv;
+out mediump vec4 outputColor;
+uniform mediump usampler2D uSampler;
+uniform lowp usampler2D mask;
+
+void main(){
+    float m = 1. - float(texelFetch(mask,ivec2(gl_FragCoord),0).x);
+    float brightness = float(texelFetch(uSampler,ivec2(gl_FragCoord),0).x)/8192.;
+    outputColor = vec4(
+        brightness,
+        brightness * m,
+        m,
+        1
+    );
 }
 `
 
@@ -129,7 +158,9 @@ export class PostProcessSortingRenderer{
         this.maskGenPass = new ShaderProgram(gl,fullscreenQuadVertex,maskGenFragShader);
         this.maskScanPass = new ShaderProgram(gl,fullscreenQuadVertex,maskScanFragShader);
         this.genKeysPass = new ShaderProgram(gl,fullscreenQuadVertex,genKeysFragShader);
-        this.sortIndexPass = new ShaderProgram(gl,fullscreenQuadVertex,sortIndiciesFragShader)
+        this.sortIndexPass = new ShaderProgram(gl,fullscreenQuadVertex,sortIndiciesFragShader);
+
+        this.debugSortingDisplay = new ShaderProgram(gl,fullscreenQuadVertex,debugSort)
 
         this.maskTexture = undefined;
         this.maskFrameBuffer = gl.createFramebuffer();
@@ -146,21 +177,41 @@ export class PostProcessSortingRenderer{
         this.sortFrameBuffer = gl.createFramebuffer();
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.sortFrameBuffer);
         gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.sortTexture0,0);
-
     }
     
     /**
      *
      * @param {WebGL2RenderingContext} gl
      */
-    render(gl){
+    async render(gl){
         if(main.viewportScaleUpdated){
             this.onUpdateViewportScale(gl);
         }
         this.sortingMaskPass(gl);
         this.scanMaskPass(gl);
         this.genSortingKeysPass(gl);
-        this.sortPass(gl,this.sortTexture0,this.dstFrameBuffer,null);
+
+        const totalPasses = Math.ceil(Math.log2(gl.canvas.clientHeight));
+        let swapped = false;
+
+        for(let pass = 0;pass<totalPasses;pass++){
+            this.dstFrameBuffer
+            for(let step = pass;step>=0;step--){
+                console.log(step)
+                gl.bindFramebuffer(gl.FRAMEBUFFER,this.sortFrameBuffer);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,swapped?this.sortTexture0:this.sortTexture1,0);        
+                this.sortPass(
+                    gl,
+                    swapped?this.sortTexture1:this.sortTexture0,
+                    this.sortFrameBuffer,
+                    step,
+                    pass === step
+                );
+                swapped = !swapped;
+                await new Promise(res=>{setTimeout(t=>res(),1)});
+            }
+        }
+        this.logged = true;
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.dstFrameBuffer);
     }
     onUpdateViewportScale(gl) {
@@ -249,7 +300,7 @@ export class PostProcessSortingRenderer{
      * 
      * @param {WebGL2RenderingContext} gl 
      */
-    sortPass(gl,srcTex,dstBuffer,dstTexture){
+    sortPass(gl,srcTex,dstBuffer,step,reversed){
         this.sortIndexPass.use();
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D,srcTex);
@@ -257,10 +308,18 @@ export class PostProcessSortingRenderer{
         gl.bindTexture(gl.TEXTURE_2D,this.maskSpansTexture);
 
         gl.bindFramebuffer(gl.FRAMEBUFFER,dstBuffer);
-        //gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,dstTexture,0);
 
         gl.uniform1i(this.sortIndexPass.getUniformLocation("uSampler"),2);
         gl.uniform1i(this.sortIndexPass.getUniformLocation("mask"),3);
+        gl.uniform1i(this.sortIndexPass.getUniformLocation("step"),step * (reversed?-1:1));
+
+        gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+
+        this.debugSortingDisplay.use();
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER,this.dstFrameBuffer);
+        gl.uniform1i(this.debugSortingDisplay.getUniformLocation("uSampler"),2);
+        gl.uniform1i(this.debugSortingDisplay.getUniformLocation("mask"),3);
 
         gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     }

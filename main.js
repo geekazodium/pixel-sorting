@@ -63,20 +63,20 @@ class Main{
         this.viewportScaleUpdated = true;
         //gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, gl.canvas.clientWidth, gl.canvas.clientHeight);
     }
-    update(){
-        this.render();
+    async update(){
+        await this.render();
         if(this.viewportScaleUpdated === true){
             this.viewportScaleUpdated = false;
         }
         this.requestNextFrame();
     }
-    render(){
+    async render(){
         const gl = this.gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER,null);
         gl.clearColor(0,0,0,0);
         gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
 
-        this.postProcessSortingRenderer.render(gl);
+        await this.postProcessSortingRenderer.render(gl);
     }
     requestNextFrame(){
         requestAnimationFrame(t=>{this.update(t - this.lastTimeStamp);this.lastTimeStamp = t;});
