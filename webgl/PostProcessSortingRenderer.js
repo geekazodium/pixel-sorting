@@ -59,7 +59,7 @@ void main(){
     lowp uint sampleColor = texelFetch(uSampler,fragCoord,0).x;
 
     lowp uint count = 0u;
-    lowp uint prev = sampleColor;
+    lowp uint prev = 0u;
 
     //debug
     int iters = 0;
@@ -162,7 +162,7 @@ uniform mediump sampler2D uSampler;
 uniform float offset;
 
 void main(){
-    outputColor = texture(uSampler,uv*vec2(1,-1) + offset);
+    outputColor = texture(uSampler,uv*vec2(1,-1) + offset*.2);
 }
 `
 
