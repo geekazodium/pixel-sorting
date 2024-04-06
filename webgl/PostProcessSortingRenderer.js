@@ -144,12 +144,8 @@ uniform lowp usampler2D mask;
 uniform mediump sampler2D colorSrc;
 
 void main(){
-    float m = float(texelFetch(mask,ivec2(gl_FragCoord),0).x);
-    uvec2 kv = texelFetch(uSampler,ivec2(gl_FragCoord),0).xy;
-    float brightness = float(kv.x)/8192.;
-    ivec2 texelCoord = ivec2(gl_FragCoord.x,kv.y);
-    vec4 c = texelFetch(colorSrc,texelCoord,0);
-    outputColor = c;
+    ivec2 texelCoord = ivec2(gl_FragCoord.x,texelFetch(uSampler,ivec2(gl_FragCoord),0).y);
+    outputColor = texelFetch(colorSrc,texelCoord,0);
 }
 `
 
@@ -243,6 +239,8 @@ export class PostProcessSortingRenderer{
                 //await new Promise(res=>{setTimeout(t=>res(),16)});
             }
         }
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D,swapped?this.sortTexture1:this.sortTexture0);
         this.transferResult(gl);
         //await new Promise(res=>{setTimeout(t=>res(),1000)});
         this.logged = true;

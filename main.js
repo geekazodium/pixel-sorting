@@ -64,11 +64,11 @@ class Main{
         //gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, gl.canvas.clientWidth, gl.canvas.clientHeight);
     }
     async update(){
+        this.requestNextFrame();
         await this.render();
         if(this.viewportScaleUpdated === true){
             this.viewportScaleUpdated = false;
         }
-        this.requestNextFrame();
     }
     async render(){
         const gl = this.gl;
